@@ -105,13 +105,17 @@ def BPEtokenizer(rawtext, targetsize):
 
         for pair, merged in newmerges.items():
             if len(vocab) >= targetsize:
+                print("Target vocab size reached. Training stopped")
                 break
             merges[pair] = merged
             vocab[merged] = len(vocab)
         print(f"Current vocab size: {len(vocab)} / {targetsize}")
     return vocab, merges
 
-raw_data = "Hello, how are you? Hello, how are you doing?"
-final_vocab, final_merges = BPEtokenizer(raw_data, 150)
+from urllib.request import urlopen
 
-print(final_merges)
+url = "https://raw.githubusercontent.com/karpathy/makemore/988aa59/names.txt"
+
+# Open the URL and read the bytes, then decode them into text
+with urlopen(url) as response:
+    rawdata = response.read().decode('utf-8')
