@@ -114,8 +114,11 @@ def BPEtokenizer(rawtext, targetsize):
 
 from urllib.request import urlopen
 
-url = "https://raw.githubusercontent.com/karpathy/makemore/988aa59/names.txt"
+url = "https://gist.githubusercontent.com/provpup/2fc41686eab7400b796b/raw/b575bd01a58494dfddc1d6429ef0167e709abf9b/hamlet.txt"
 
 # Open the URL and read the bytes, then decode them into text
 with urlopen(url) as response:
     rawdata = response.read().decode('utf-8')
+
+finalvocab, finalmerge = BPEtokenizer(rawdata, 5000)
+print(finalvocab)
