@@ -36,3 +36,42 @@ for i in range(num_merges):
     print(f"merging {pair} into a new token {idx}")
     ids = merge(ids, pair, idx)
     merges[pair] = idx
+
+print("tokens length:", len(tokens))
+print("ids length:", len(ids))
+print(f"compression ratio: {len(tokens) / len(ids):.2f}x")
+
+"""
+DECODING
+"""
+# a mapping (dictionary) from the token id to the bytes object for that token
+vocab = {idx: bytes([idx]) for idx in range(256)}
+# go through the tree
+for (p0, p1), idx in merges.items():
+    vocab[idx] = vocab[p0] + vocab[p1]
+    # vocab[p0] --> first child, vocab[p1] --> second child
+
+def decode(ids):
+    # given ids (list of integers), return Python string
+    tokens = b"".join(vocab[idx] for idx in ids) # concatenate bytes together
+    text = tokens.decode("utf-8", errors="replace") # not all tokens are standard utf-8, so use errors="replace"
+    return text
+
+# print(decode([128]))
+
+"""
+ENCODING
+"""
+def encode(text):
+    tokens = list(text.encode("utf-8"))
+    while len(tokens) >= 2:
+        stats = get_stats(tokens)
+        pair = min(stats, key=lambda p: merges.get(p, float("inf")))
+        if pair not in merges:
+            break # nothing else can be merged
+        idx = merges[pair]
+        tokens = merge(tokens, pair, idx)
+    return tokens
+
+# print(encode("hello world!"))
+# print(encode("Hello World!"))
