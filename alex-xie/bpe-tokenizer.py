@@ -89,7 +89,7 @@ def mergePairs(charList):
     return charList, merges
 
 #BPE training
-def BPEtokenizer(rawtext, targetsize):
+def BPEtokenizer(rawtext, targetsize = 5000):
     pretokens = convertChar(normalize(rawtext))
 
     base_vocab = set()
@@ -139,7 +139,7 @@ def load_tokens(filename="token_data.json"):
     return token_data["vocab"], token_data["merges"]
 
 #encode text with token ids
-def encode(rawtext, merges, vocab):
+def encode(rawtext, vocab, merges):
     charList = convertChar(normalize(rawtext))
     
     # apply your learned merges in the exact order they were trained
