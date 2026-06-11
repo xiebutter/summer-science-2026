@@ -1,10 +1,12 @@
 import os
 import random
 import math
+import json
 
 import unicodedata
 import re
-from collections import Counter
+from collections import Counter, defaultdict
+from heapq import heappush, heappop
 
 test_text = "Hello, how are you? Hello, I am doing good."
 
@@ -24,6 +26,8 @@ def normalize(text):
     result = []
     for match in pattern.finditer(norm):
         token = match.group()
+        if token.strip("Ġ") == "":
+            continue
         start, end = match.span()
         result.append((token, (start, end)))
         
@@ -120,5 +124,24 @@ url = "https://gist.githubusercontent.com/provpup/2fc41686eab7400b796b/raw/b575b
 with urlopen(url) as response:
     rawdata = response.read().decode('utf-8')
 
-finalvocab, finalmerge = BPEtokenizer(rawdata, 5000)
-print(finalvocab)
+finalvocab, finalmerge = BPEtokenizer(rawdata, 10000)
+
+def save_data(vocab, merges, filename="token_data.json"):
+    token_data = {
+        "vocab": vocab,
+        "merges": {str(k): v for k, v in merges.items()}
+    }
+    with open(filename, "w") as f:
+        json.dump(token_data, f, indent = 4)
+    print(f"Token data saved to {filename}")
+
+def load_token_data(filename="token_data.json"):
+    with open(filename, "r") as f:
+        token_data = json.load(f)
+
+    token_data["merges"] = {eval(k): v for k, v in token_data["merges"].items()}
+
+    print(f"Token data loaded from {filename}")
+    return token_data["vocab"], token_data["merges"]
+
+save_data(finalvocab, finalmerge, "hamlet_token.json")
