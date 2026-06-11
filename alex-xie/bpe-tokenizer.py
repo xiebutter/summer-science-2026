@@ -54,6 +54,7 @@ def pairCounter(chars):
             counts[pair] += 1
     return counts
 
+#merges common character pairs
 def mergePairs(charList):
     merges = {}
     counts = pairCounter(charList)
@@ -87,6 +88,7 @@ def mergePairs(charList):
     
     return charList, merges
 
+#BPE training
 def BPEtokenizer(rawtext, targetsize):
     pretokens = convertChar(normalize(rawtext))
 
@@ -116,17 +118,8 @@ def BPEtokenizer(rawtext, targetsize):
         print(f"Current vocab size: {len(vocab)} / {targetsize}")
     return vocab, merges
 
-from urllib.request import urlopen
-
-url = "https://gist.githubusercontent.com/provpup/2fc41686eab7400b796b/raw/b575bd01a58494dfddc1d6429ef0167e709abf9b/hamlet.txt"
-
-# Open the URL and read the bytes, then decode them into text
-with urlopen(url) as response:
-    rawdata = response.read().decode('utf-8')
-
-finalvocab, finalmerge = BPEtokenizer(rawdata, 10000)
-
-def save_data(vocab, merges, filename="token_data.json"):
+#save token data
+def save_tokens(vocab, merges, filename="token_data.json"):
     token_data = {
         "vocab": vocab,
         "merges": {str(k): v for k, v in merges.items()}
@@ -135,7 +128,8 @@ def save_data(vocab, merges, filename="token_data.json"):
         json.dump(token_data, f, indent = 4)
     print(f"Token data saved to {filename}")
 
-def load_token_data(filename="token_data.json"):
+#load token data
+def load_tokens(filename="token_data.json"):
     with open(filename, "r") as f:
         token_data = json.load(f)
 
@@ -144,4 +138,54 @@ def load_token_data(filename="token_data.json"):
     print(f"Token data loaded from {filename}")
     return token_data["vocab"], token_data["merges"]
 
-save_data(finalvocab, finalmerge, "hamlet_token.json")
+#encode text with token ids
+def encode(rawtext, merges, vocab):
+    charList = convertChar(normalize(rawtext))
+    
+    # apply your learned merges in the exact order they were trained
+    for pair, merged_string in merges.items():
+        first, second = pair
+        currentList = []
+        
+        for word in charList:
+            new_word = []
+            i = 0
+            while i < len(word):
+                # Look for the target pair and glue them together
+                if i < len(word) - 1 and word[i] == first and word[i+1] == second:
+                    new_word.append(first + second)
+                    i += 2
+                else:
+                    new_word.append(word[i])
+                    i += 1
+            currentList.append(new_word)
+
+        charList = currentList
+    token_ids = []
+    for word in charList:
+        for token in word:
+            if token in vocab:
+                token_ids.append(vocab[token])
+            else:
+                print(f"Warning: Character '{token}' not found in vocabulary. Skipping.")
+                
+    return token_ids
+
+#decode text from token ids
+def decode(token_ids, vocab):
+    id_to_token = {idx: token for token, idx in vocab.items()}
+    
+    # Convert the IDs back into their string fragments
+    fragments = [id_to_token[uid] for uid in token_ids]
+
+    merged_text = "".join(fragments)
+    clean_text = merged_text.replace("Ġ", " ")
+    
+    return clean_text
+
+#tokenize hamlet
+
+# from urllib.request import urlopen
+# url = "https://gist.githubusercontent.com/provpup/2fc41686eab7400b796b/raw/b575bd01a58494dfddc1d6429ef0167e709abf9b/hamlet.txt"
+# with urlopen(url) as response:
+#     rawdata = response.read().decode('utf-8')
