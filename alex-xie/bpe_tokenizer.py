@@ -6,9 +6,10 @@ import json
 import unicodedata
 import re
 from collections import Counter, defaultdict
-from heapq import heappush, heappop
 
 test_text = "Hello, how are you? Hello, I am doing good."
+
+# simplify using basic python (intro to cs class-level)
 
 #text normalization: "Hëllô, hòw âré yôu?" --> [('Hello', (0, 5)), (',', (5, 6)), ('Ġhow', (6, 10)), ('Ġare', (10, 14)), 
 #                                               ('Ġyou', (14, 18)), ('?', (18, 19)）]
@@ -185,7 +186,7 @@ def decode(token_ids, vocab):
 
 #tokenize hamlet
 
-# from urllib.request import urlopen
-# url = "https://gist.githubusercontent.com/provpup/2fc41686eab7400b796b/raw/b575bd01a58494dfddc1d6429ef0167e709abf9b/hamlet.txt"
-# with urlopen(url) as response:
-#     rawdata = response.read().decode('utf-8')
+from urllib.request import urlopen
+url = "https://gist.githubusercontent.com/provpup/2fc41686eab7400b796b/raw/b575bd01a58494dfddc1d6429ef0167e709abf9b/hamlet.txt"
+with urlopen(url) as response:
+    rawdata = response.read().decode('utf-8')
