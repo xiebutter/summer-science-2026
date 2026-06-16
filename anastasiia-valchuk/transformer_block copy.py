@@ -11,14 +11,14 @@ class SelfAttentionHead(nn.Module):
         self.key = nn.Linear(embedding_dim, head_size, bias=False)
         self.query = nn.Linear(embedding_dim, head_size, bias=False)
         self.value = nn.Linear(embedding_dim, head_size, bias=False)
-        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # not necessary, but automatically moves tensors to the appropriate device
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # register_buffer is not necessary, but it automatically moves tensors to the appropriate device. It also does not track gradients of the tensor. 'tril' - lower triangle, returns the lower triangular part of a matrix, zeroing out everything above diagonal
 
     def forward(self, x, head_size):
         B, T, C = x.shape # batch size, sequence length (time steps), embedding dim (channels)
         k = self.key(x)
         q = self.query(x)
         wei = q @ k.transpose(-2, -1) / (head_size ** 0.5) # basically formula from "Attention is all you need"
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # causal masking, where future positions are set to negative infinity (0s after softmax)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # causal masking, where future positions (previosuly set to 0 by torch.tril) are set to negative infinity (0s after softmax)
         wei = F.softmax(wei, dim=-1)
         v = self.value(x)
         out = wei @ v
