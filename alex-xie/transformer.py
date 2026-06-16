@@ -20,3 +20,12 @@ val_data = data[n:]
 
 blocksize = 8
 batchsize = 4
+
+def get_batch(split):
+    data = training_data if split == 'train' else val_data
+    ix = torch.randint(len(data) - blocksize, (batchsize,))
+    x = torch.stack([data[i:i+blocksize] for i in ix])
+    y = torch.stack([data[i+1:i+blocksize+1] for i in ix])
+
+    return x, y
+
