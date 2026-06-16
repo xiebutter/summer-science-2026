@@ -64,28 +64,6 @@ class BasicTokenizer():
 # -----------------------------------------------------------------------------------------------------------------------
 # Testing
 
-# text = "ABDCABECAB"
-# original_tokens = list(text.encode("utf-8"))
-# vocab_size_prev = 256
-
-# tokenizer = BasicTokenizer()
-# vocab_size_target = 260
-# tokenizer.train(text, vocab_size=vocab_size_target)
-
-# vocab_size_after = len(tokenizer.vocab)
-# encoded = tokenizer.encode(text)
-# decoded = tokenizer.decode(encoded)
-
-# print("Before encoding:")
-# print(f"text: {text}")
-# print(f"vocab size: {vocab_size_prev}")
-# print(f"number of tokens: {len(original_tokens)}")
-
-# print("\nAfter encoding:")
-# print(f"decoded text: {decoded}")
-# print(f"vocab size: {vocab_size_after}")
-# print(f"number of tokens: {len(encoded)}")
-
 text = "ABDCABECAB"
 def show_tokens(ids, tokenizer):
     return " ".join(tokenizer.vocab[i].decode("utf-8", errors="replace") for i in ids)
