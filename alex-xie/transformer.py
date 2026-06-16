@@ -29,3 +29,11 @@ def get_batch(split):
 
     return x, y
 
+xb, yb = get_batch('train')
+
+for b in range(batchsize):
+    for i in range(blocksize):
+        context = xb[b, :i+1]
+        target = yb[b,i]
+
+        print(f"when context is {context.tolist()} target is {target}")

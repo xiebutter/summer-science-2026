@@ -144,6 +144,8 @@ def encode(rawtext, vocab, merges):
     charList = convertChar(normalize(rawtext))
     
     # apply your learned merges in the exact order they were trained
+    print("Encoding text...")
+    perc = 0
     for pair, merged_string in merges.items():
         first, second = pair
         currentList = []
@@ -160,16 +162,20 @@ def encode(rawtext, vocab, merges):
                     new_word.append(word[i])
                     i += 1
             currentList.append(new_word)
-
         charList = currentList
+        perc += 1
+        total = perc/len(merges.items())
+        print(f"\r{100*total:.1f}%", end="")
+
     token_ids = []
     for word in charList:
         for token in word:
             if token in vocab:
                 token_ids.append(vocab[token])
             else:
-                print(f"Warning: Character '{token}' not found in vocabulary. Skipping.")
-                
+                print(f"Warning: Character '{token}' not found in vocabulary. Skipping.")   
+    
+    print("\nRaw text encoded", end="\n")          
     return token_ids
 
 #decode text from token ids
