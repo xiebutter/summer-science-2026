@@ -30,10 +30,46 @@ def get_batch(split):
     return x, y
 
 xb, yb = get_batch('train')
+print("inputs:")
+print(xb.shape)
+print(xb)
+print("targets:")
+print(yb.shape)
+print(yb)
 
-for b in range(batchsize):
-    for i in range(blocksize):
-        context = xb[b, :i+1]
-        target = yb[b,i]
+import torch.nn as nn
+from torch.nn import functional as F
 
-        print(f"when context is {context.tolist()} target is {target}")
+class BigramLanguageModel(nn.Module):
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+
+    def forward(self, idx, targets):
+        logits = self.token_embedding_table(idx)
+        
+        B, T, C = logits.shape
+        logits = logits.view(B*T, C)
+        targets = targets.view(B*T)
+        loss = F.cross_entropy(logits, targets)
+
+        return logits, loss
+    
+    def generate(self, idx, max_new_tokens):
+
+        for _ in range(max_new_tokens):
+
+            logits, loss = self(idx)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+
+            idx_next = torch.multinomial(probs, num_samples = 1)
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx
+    
+m = BigramLanguageModel(vocab_size=len(vocab))
+logits, loss = m(xb, yb)
+
+print(logits.shape)
+print(loss)
