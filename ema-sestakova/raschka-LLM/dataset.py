@@ -9,9 +9,9 @@ class GPTDatasetV1(Dataset):
     def __init__(self, txt, tokenizer, max_length, stride):
         self.input_ids = []
         self.target_ids = []
-        # tokenizes the entire text
+        # tokenize the entire text
         token_ids = tokenizer.encode(txt)
-        # uses a sliding window to chunk the book into overlapping 
+        # use a sliding window to chunk the book into overlapping 
         # sequences of max length
         for i in range(0, len(token_ids) - max_length, stride):
             input_chunk = token_ids[i:i + max_length]
@@ -27,13 +27,14 @@ class GPTDatasetV1(Dataset):
     def __getitem__(self, idx):
         return self.input_ids[idx], self.target_ids[idx]
 
-# ---------------------------------------------------------------------------
-
+# ----------------------------------------------------------
+# Dataloader
+# ----------------------------------------------------------
 def create_dataloader_v1(txt, batch_size=4, max_length=256, stride=128, 
                          shuffle=True, drop_last=True, num_workers=0):
-    # initializes the tokenizer
+    # initialize the tokenizer
     tokenizer = tiktoken.get_encoding("gpt2")
-    # creates dataset
+    # create dataset
     dataset = GPTDatasetV1(txt, tokenizer, max_length, stride)
     dataloader = DataLoader(
         dataset,
@@ -47,7 +48,7 @@ def create_dataloader_v1(txt, batch_size=4, max_length=256, stride=128,
     )
     return dataloader
 
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------
 
 def load_text(path):
     with open(path, "r", encoding="utf-8") as f:
