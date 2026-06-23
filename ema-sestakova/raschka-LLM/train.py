@@ -1,15 +1,13 @@
-# Pretraining the LLM (on unlabled data)
-
-# Pretraining includes the (1) training loop, (2) model evaluation, and 
-# (3) loading pretrained weights
-
+"""
+Pretraining.
+"""
 import torch
+import os
 import tiktoken
-from model import GPTModel
-from model import generate_text_simple
-from dataset import create_dataloader_v1
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+from model import GPTModel, generate
+from dataset import prepare_dataloaders
 
 GPT_CONFIG_124M = {
     "vocab_size": 50257,
@@ -20,10 +18,10 @@ GPT_CONFIG_124M = {
     "drop_rate": 0.1,
     "qkv_bias": False
 }
-torch.manual_seed(123)
-model = GPTModel(GPT_CONFIG_124M)
-model.eval()
 
+# ----------------------------------------------------------
+# UTILITY FUNCTIONS
+# ----------------------------------------------------------
 def text_to_token_ids(text, tokenizer):
     encoded = tokenizer.encode(text, allowed_special={'<|endoftext|>'})
     # .unsqueeze(0) adds the batch dimension
@@ -35,71 +33,8 @@ def token_ids_to_text(token_ids, tokenizer):
     # removes batch dimension
     return tokenizer.decode(flat.tolist())
 
-start_context = "Every effort moves you"
-tokenizer = tiktoken.get_encoding("gpt2")
-
-token_ids = generate_text_simple(
-    model=model,
-    idx=text_to_token_ids(start_context, tokenizer),
-    max_new_tokens=10,
-    context_size=GPT_CONFIG_124M["context_length"]
-)
-
-inputs = torch.tensor([[16833, 3626, 6100], # ["every effort moves",
-                       [40, 1107, 588]]) # "I really like"]
-targets = torch.tensor([[3626, 6100, 345 ], # [" effort moves you",
-                        [1107, 588, 11311]]) # " really like chocolate"]
-
-# Disables gradient tracking since we are not training yet
-with torch.no_grad():
-    logits = model(inputs)
-# Probability of each token in vocabulary 
-probas = torch.softmax(logits, dim=-1)
-token_ids = torch.argmax(probas, dim=-1, keepdim=True)
-
-logits_flat = logits.flatten(0, 1)
-targets_flat = targets.flatten()
-loss = torch.nn.functional.cross_entropy(logits_flat, targets_flat)
-
-# Calculating the training and validation set losses
-file_path = "the-verdict.txt"
-with open(file_path, "r", encoding="utf-8") as file:
-    text_data = file.read()
-
-# 1. input text dataset
-# 2. tokenized training dataset
-# 3. training datasets in chuncks of length 6
-# 4. training datasets in batches
-
-# When preparing the data loaders, we split the input text into training and 
-# validation set portions
-train_ratio = 0.90 # 90% of data used for training, 10% for validation
-split_idx = int(train_ratio * len(text_data))
-train_data = text_data[:split_idx]
-val_data = text_data[split_idx:]
-
-torch.manual_seed(123)
-train_loader = create_dataloader_v1(
-    train_data,
-    batch_size=2,
-    max_length=GPT_CONFIG_124M["context_length"],
-    stride=GPT_CONFIG_124M["context_length"],
-    drop_last=True,
-    shuffle=True,
-    num_workers=0
-)
-val_loader = create_dataloader_v1(
-    val_data,
-    batch_size=2,
-    max_length=GPT_CONFIG_124M["context_length"],
-    stride=GPT_CONFIG_124M["context_length"],
-    drop_last=False,
-    shuffle=False,
-    num_workers=0
-)
-
-# utility function that calculates the cross entropy loss of a given
-# batch returned via the training and validation loader
+# calculates the cross entropy loss of a given batch returned via the
+# training and validation loader
 def calc_loss_batch(input_batch, target_batch, model, device):
     input_batch = input_batch.to(device)
     target_batch = target_batch.to(device)
@@ -109,7 +44,7 @@ def calc_loss_batch(input_batch, target_batch, model, device):
     )
     return loss
 
-# Function to compute the training and validation loss
+# computes the training and validation loss
 def calc_loss_loader(data_loader, model, device, num_batches=None):
     total_loss = 0.
     if len(data_loader) == 0:
@@ -134,37 +69,27 @@ def calc_loss_loader(data_loader, model, device, num_batches=None):
     # averages loss over all batches
     return total_loss / num_batches
 
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
-with torch.no_grad():
-    train_loss = calc_loss_loader(train_loader, model, device)
-    val_loss = calc_loss_loader(val_loader, model, device)
-print("Training loss:", train_loss)
-print("Validation loss:", val_loss)
-
-# ---------------------------------------------------------------------------
-# Training an LLM
-
-# 1. iterate over training epochs
-# 2. iterate over batches in each training epoch
-#       - the number of batches is determined by the training set
-#         size divided by the size of each batch
-# 3. reset loss gradients from previous batch iteration
-# 4. calculate loss on current batch
-# 5. backward pass to calculate loss gradients
-# 6. update model weights using loss gradients
-# 7. print training and validation set losses -- optional
-# 8. generate sample text for visual inspection -- optional
-
+# prints the training and validation set losses after each model update
+def evaluate_model(model, train_loader, val_loader, device, eval_iter):
+    # dropot is disabled during evaluation for stable, reproducible results
+    model.eval()
+    # disables gradient tracking
+    with torch.no_grad():
+        train_loss = calc_loss_loader(
+            train_loader, model, device, num_batches=eval_iter
+        )
+        val_loss = calc_loss_loader(
+            val_loader, model, device, num_batches=eval_iter
+        )
+    model.train()
+    return train_loss, val_loss
 
 # the main function for pretraining LLMs
-def train_model_simple(model, train_loader, val_loader, optimizer, device, 
+def train_model(model, train_loader, val_loader, optimizer, device, 
                        num_epochs, eval_freq, eval_iter, start_context, tokenizer):
     # initializes lists to track losses and tokens seen
     train_losses, val_losses, track_tokens_seen = [], [], []
     tokens_seen, global_step = 0, -1
-
     # main training loop
     for epoch in range(num_epochs):
         model.train()
@@ -180,7 +105,6 @@ def train_model_simple(model, train_loader, val_loader, optimizer, device,
             optimizer.step()
             tokens_seen += input_batch.numel()
             global_step += 1
-
             # OPTIONAL evaluation step
             if global_step % eval_freq == 0:
                 train_loss, val_loss = evaluate_model(
@@ -199,37 +123,19 @@ def train_model_simple(model, train_loader, val_loader, optimizer, device,
         )
     return train_losses, val_losses, track_tokens_seen
 
-
-# prints the training and validation set losses after each model update
-def evaluate_model(model, train_loader, val_loader, device, eval_iter):
-    # dropot is disabled during evaluation for stable, reproducible results
-    model.eval()
-    # disables gradient tracking
-    with torch.no_grad():
-        train_loss = calc_loss_loader(
-            train_loader, model, device, num_batches=eval_iter
-        )
-        val_loss = calc_loss_loader(
-            val_loader, model, device, num_batches=eval_iter
-        )
-    model.train()
-    return train_loss, val_loss
-
-
 # generates a text sample
 def generate_and_print_sample(model, tokenizer, device, start_context):
     model.eval()
     context_size = model.pos_emb.weight.shape[0]
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
     with torch.no_grad():
-        token_ids = generate_text_simple(
+        token_ids = generate(
             model=model, idx=encoded,
             max_new_tokens=50, context_size=context_size
         )
     decoded_text = token_ids_to_text(token_ids, tokenizer)
     print(decoded_text.replace("\n", " "))
     model.train()
-
 
 # plots training and validation set losses
 def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
@@ -248,22 +154,85 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
     fig.tight_layout()
     plt.show()
 
-# ---------------------------------------------------------------------------
-# TESTING
+# ----------------------------------------------------------
+# MAIN
+# ----------------------------------------------------------
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = tiktoken.get_encoding("gpt2")
+    file_path = os.path.join(os.path.dirname(__file__), "shakespeare.txt")
+    train_loader, val_loader = prepare_dataloaders(
+        file_path=file_path,
+        batch_size=2,
+        max_length=GPT_CONFIG_124M["context_length"],
+        stride=GPT_CONFIG_124M["context_length"],
+        train_ratio=0.9,
+        num_workers=0
+    )
+    model = GPTModel(GPT_CONFIG_124M).to(device)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=0.0004, weight_decay=0.1
+    )
+    interrupted_checkpoint = "model_and_optimizer_interrupted.pth"
+    final_checkpoint = "model_and_optimizer.pth"
 
-torch.manual_seed(123)
-model = GPTModel(GPT_CONFIG_124M)
-model.to(device)
-optimizer = torch.optim.AdamW(
-    model.parameters(),
-    lr=0.0004, weight_decay=0.1
-)
-num_epochs = 10
-train_losses, val_losses, tokens_seen = train_model_simple(
-    model, train_loader, val_loader, optimizer, device,
-    num_epochs=num_epochs, eval_freq=5, eval_iter=5,
-    start_context="Every effort moves you", tokenizer=tokenizer
-)
+    if os.path.exists(interrupted_checkpoint):
+        answer = input(
+            f"Found interrupted checkpoint '{interrupted_checkpoint}'. "
+            "Resume training from it? [y/n]: "
+        ).strip().lower()
+        if answer is "y":
+            checkpoint = torch.load(interrupted_checkpoint, map_location=device)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            print("Loaded interrupted checkpoint. Resuming training.")
+        else:
+            print("Starting training from scratch.")
+    num_epochs = 10
+    try:
+        train_losses, val_losses, tokens_seen = train_model(
+            model, train_loader, val_loader, optimizer, device,
+            num_epochs=num_epochs,
+            eval_freq=5,
+            eval_iter=5,
+            start_context="Every effort moves you",
+            tokenizer=tokenizer
+        )
+    except KeyboardInterrupt:
+        print("\nTraining interrupted. Saving checkpoint...")
+        torch.save({
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+        }, "model_and_optimizer_interrupted.pth")
+        print("Checkpoint saved as model_and_optimizer_interrupted.pth")
+        return
 
-epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
-plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+    # only runs if training completed normally
+    epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
+    plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+    # save checkpoint
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+    }, final_checkpoint)
+    print(f"Final model saved as {final_checkpoint}")
+
+    if os.path.exists(interrupted_checkpoint):
+        os.remove(interrupted_checkpoint)
+        print(f"Removed old interrupted checkpoint '{interrupted_checkpoint}'")
+
+    model.eval()
+    context = text_to_token_ids("Every effort moves you", tokenizer).to(device)
+    token_ids = generate(
+        model=model,
+        idx=context,
+        max_new_tokens=15,
+        context_size=GPT_CONFIG_124M["context_length"],
+        top_k=25,
+        temperature=1.4
+    )
+    print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
+
+if __name__ == "__main__":
+    main()
