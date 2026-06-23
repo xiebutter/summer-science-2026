@@ -1,4 +1,6 @@
-# Attention mechanism
+"""
+Attention Mechanism.
+"""
 import torch
 import torch.nn as nn
 
@@ -35,11 +37,9 @@ class MultiHeadAttention(nn.Module):
         #       (b, num_tokens, d_out) --> (b, num_tokens, num_heads, head_dim)
         keys = keys.view(b, num_tokens, self.num_heads, self.head_dim)
         values = values.view(b, num_tokens, self.num_heads, self.head_dim)
-        queries = queries.view(
-        b, num_tokens, self.num_heads, self.head_dim
-        )
-        # Transposes from shape (b, num_tokens, num_heads, head_dim) 
-        # to (b, num_heads, num_tokens, head_dim
+        queries = queries.view(b, num_tokens, self.num_heads, self.head_dim)
+        # transpose from shape (b, num_tokens, num_heads, head_dim) 
+        #   to (b, num_heads, num_tokens, head_dim
         keys = keys.transpose(1, 2)
         queries = queries.transpose(1, 2)
         values = values.transpose(1, 2)
@@ -51,9 +51,9 @@ class MultiHeadAttention(nn.Module):
         attn_scores.masked_fill_(mask_bool, -torch.inf)
         attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
         attn_weights = self.dropout(attn_weights)
-        # Tensor shape: (b, num_tokens, n_heads, head_dim)
+        # tensor shape: (b, num_tokens, n_heads, head_dim)
         context_vec = (attn_weights @ values).transpose(1, 2)
-        # Combines heads, where self.d_out = self.num_heads * self.head_dim
+        # combine heads, where self.d_out = self.num_heads * self.head_dim
         context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
         # adds an optional linear projection
         context_vec = self.out_proj(context_vec)
@@ -70,12 +70,11 @@ inputs = torch.tensor(
      [0.77, 0.25, 0.10], # one (x^5)
      [0.05, 0.80, 0.55]] # step (x^6)
 )
-
-torch.manual_seed(123)
-batch = torch.stack((inputs, inputs), dim=0)
-batch_size, context_length, d_in = batch.shape
-d_out = 2
-mha = MultiHeadAttention(d_in, d_out, context_length, 0.0, num_heads=2)
-context_vecs = mha(batch)
-print(context_vecs)
-print("context_vecs.shape:", context_vecs.shape)
+# torch.manual_seed(123)
+# batch = torch.stack((inputs, inputs), dim=0)
+# batch_size, context_length, d_in = batch.shape
+# d_out = 2
+# mha = MultiHeadAttention(d_in, d_out, context_length, 0.0, num_heads=2)
+# context_vecs = mha(batch)
+# print(context_vecs)
+# print("context_vecs.shape:", context_vecs.shape)
