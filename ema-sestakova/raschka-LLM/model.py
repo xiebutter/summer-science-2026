@@ -1,12 +1,9 @@
-# LLM Architecture
+"""
+LLM Architecture.
+"""
 import torch
 import torch.nn as nn
-import tiktoken
-import matplotlib.pyplot as plt
 from attention_mechanism import MultiHeadAttention
-
-# ---------------------------------------------------------------------------
-# GPT Backbone
 
 # Dictionary of the GPT-2 model configuration
 GPT_CONFIG_124M = {
@@ -19,9 +16,9 @@ GPT_CONFIG_124M = {
     "qkv_bias": False # Query-Key-Value bias
 }
 
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------
 # Layer Normalization
-
+# ----------------------------------------------------------
 class LayerNorm(nn.Module):
     def __init__(self, emb_dim):
         super().__init__()
@@ -35,9 +32,9 @@ class LayerNorm(nn.Module):
         norm_x = (x - mean) / torch.sqrt(var + self.eps)
         return self.scale * norm_x + self.shift
 
-# ---------------------------------------------------------------------------
-# GELU activation
-
+# ----------------------------------------------------------
+# GELU Activation
+# ----------------------------------------------------------
 class GELU(nn.Module):
     def __init__(self):
         super().__init__()
@@ -54,9 +51,9 @@ class GELU(nn.Module):
 # GELU is a smooth, nonlinear function that approximates ReLU but 
 # with a non-zero gradient for almost all negative values
 
-# ---------------------------------------------------------------------------
-# Feed forward network
-
+# ----------------------------------------------------------
+# Feed Forward Network
+# ----------------------------------------------------------
 class FeedForward(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -71,14 +68,13 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
-# ---------------------------------------------------------------------------
-# Transformer block
-
+# ----------------------------------------------------------
+# Transformer Block 
+# ----------------------------------------------------------
 # input --> *(shortcut connection) --> layer norm 1 --> masked multi-head attention
 #   --> dropout * --> *(shortcut connection) --> layer norm 2
 #       --> feed forward (linear layer --> GELU --> linear layer) --> dropout * --> output
 # outputs have the same form and dimensions as the inputs
-
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -112,9 +108,9 @@ class TransformerBlock(nn.Module):
         x = x + shortcut
         return x
 
-# ---------------------------------------------------------------------------
-# The GPT model architecture implementation
-
+# ----------------------------------------------------------
+# GPT Model Architecture
+# ----------------------------------------------------------
 class GPTModel(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -141,8 +137,9 @@ class GPTModel(nn.Module):
         logits = self.out_head(x)
         return logits
   
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------
 # Generating Text
+# ----------------------------------------------------------
 
 # INPUT: "Hello, I am", single iteration:
 # 1. Encodes text input into four token IDs
@@ -156,45 +153,62 @@ class GPTModel(nn.Module):
 #       represents the token ID
 # 6. Appends token to the previous inputs for the next round
 
-# A function for the GPT model to generate text
-# a generative loop for a language model using PyTorch
-def generate_text_simple(model, idx, max_new_tokens, context_size):
+# A text generation function with more diversity. Includes temperature
+# sampling and top-k sampling.
+def generate(model, idx, max_new_tokens, context_size,
+             temperature=0.0, top_k=None, eos_id=None):
     for _ in range(max_new_tokens):
-        # Crops current context if it exceeds the supported context size
         idx_cond = idx[:, -context_size:]
         with torch.no_grad():
             logits = model(idx_cond)
-        # Focuses only on the last time step, so that (batch, n_token, vocab_size)
-        # becomes (batch, vocab_size)
         logits = logits[:, -1, :]
-        probas = torch.softmax(logits, dim=-1) # shape (batch, vocab_size)
-        idx_next = torch.argmax(probas, dim=-1, keepdim=True) # shape (batch, 1)
-        # Appends sampled index to the running sequence
-        idx = torch.cat((idx, idx_next), dim=1) # shape (batch, n_tokens+1)
+        # filters logits with top_k sampling
+        if top_k is not None:
+            top_logits, _ = torch.topk(logits, top_k)
+            min_val = top_logits[:, -1]
+            logits = torch.where(
+                logits < min_val,
+                torch.tensor(float('-inf')).to(logits.device),
+                logits
+            )
+        # applies temperature scaling
+        if temperature > 0.0:
+            logits = logits / temperature
+            probs = torch.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+        else:
+            # carries out greedy next-token selection as before where temperature
+            # scaling is disabled
+            idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+        if idx_next == eos_id:
+            # stops generating early id end-of-sequence token is encountered
+            break
+        idx = torch.cat((idx, idx_next), dim=1)
     return idx
 
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------
 # Example
+# ----------------------------------------------------------
 
-tokenizer = tiktoken.get_encoding("gpt2")
-torch.manual_seed(123)
-model = GPTModel(GPT_CONFIG_124M)
+# tokenizer = tiktoken.get_encoding("gpt2")
+# torch.manual_seed(123)
+# model = GPTModel(GPT_CONFIG_124M)
 
-start_context = "Hello, I am"
-encoded = tokenizer.encode(start_context)
-print("encoded:", encoded)
-encoded_tensor = torch.tensor(encoded).unsqueeze(0)
-print("encoded_tensor.shape:", encoded_tensor.shape)
+# start_context = "Hello, I am"
+# encoded = tokenizer.encode(start_context)
+# print("encoded:", encoded)
+# encoded_tensor = torch.tensor(encoded).unsqueeze(0)
+# print("encoded_tensor.shape:", encoded_tensor.shape)
 
-# eval() disables dropout since we are not training the model
-model.eval()
-out = generate_text_simple(
-    model=model,
-    idx=encoded_tensor,
-    max_new_tokens=6,
-    context_size=GPT_CONFIG_124M["context_length"]
-)
-print("Output:", out)
-print("Output length:", len(out[0]))
-decoded_text = tokenizer.decode(out.squeeze(0).tolist())
-print(decoded_text)
+# # eval() disables dropout since we are not training the model
+# model.eval()
+# out = generate(
+#     model=model,
+#     idx=encoded_tensor,
+#     max_new_tokens=6,
+#     context_size=GPT_CONFIG_124M["context_length"]
+# )
+# print("Output:", out)
+# print("Output length:", len(out[0]))
+# decoded_text = tokenizer.decode(out.squeeze(0).tolist())
+# print(decoded_text)
