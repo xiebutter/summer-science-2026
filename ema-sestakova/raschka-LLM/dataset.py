@@ -1,5 +1,6 @@
-# Data preparation and sampling
-
+"""
+Data Preparation and Sampling.
+"""
 import tiktoken
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -26,6 +27,8 @@ class GPTDatasetV1(Dataset):
     def __getitem__(self, idx):
         return self.input_ids[idx], self.target_ids[idx]
 
+# ---------------------------------------------------------------------------
+
 def create_dataloader_v1(txt, batch_size=4, max_length=256, stride=128, 
                          shuffle=True, drop_last=True, num_workers=0):
     # initializes the tokenizer
@@ -37,40 +40,48 @@ def create_dataloader_v1(txt, batch_size=4, max_length=256, stride=128,
         batch_size=batch_size,
         shuffle=shuffle,
         # drop_last=True drops the last batch if it is shorter than the
-        # specified batch_size to prevent loss spikes during training.
+        #  specified batch_size to prevent loss spikes during training.
         drop_last=drop_last,
-        # The number of CPU processes to use for preprocessing
+        # the number of CPU processes to use for preprocessing
         num_workers=num_workers
     )
     return dataloader
 
 # ---------------------------------------------------------------------------
 
-with open("the-verdict.txt", "r", encoding="utf-8") as f:
-    raw_text = f.read()
+def load_text(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+    
+# 90% of data used for training, 10% for validation
+def split_data(text_data, train_ratio=0.9):
+    split_idx = int(train_ratio * len(text_data))
+    train_data = text_data[:split_idx]
+    val_data = text_data[split_idx:]
+    return train_data, val_data
 
-vocab_size = 50257
-output_dim = 256
-token_embedding_layer = torch.nn.Embedding(vocab_size, output_dim)
-
-# Dataloader
-max_length = 4
-dataloader = create_dataloader_v1(raw_text, batch_size=8, max_length=max_length,
-                                  stride=max_length, shuffle=False)
-data_iter = iter(dataloader)
-inputs, targets = next(data_iter)
-print("Token IDs:\n", inputs)
-print("\nInputs shape:\n", inputs.shape)
-
-# First embedding layer
-token_embeddings = token_embedding_layer(inputs)
-print(token_embeddings.shape)
-
-# Second embedding layer
-context_length = max_length
-pos_embedding_layer = torch.nn.Embedding(context_length, output_dim)
-pos_embeddings = pos_embedding_layer(torch.arange(context_length))
-print(pos_embeddings.shape)
-
-input_embeddings = token_embeddings + pos_embeddings
-print(input_embeddings.shape)
+def prepare_dataloaders(file_path, batch_size, max_length,
+                        train_ratio=0.9, stride=None, num_workers=0,):
+    if stride is None:
+        stride = max_length
+    text_data = load_text(file_path)
+    train_data, val_data = split_data(text_data, train_ratio=train_ratio)
+    train_loader = create_dataloader_v1(
+        train_data,
+        batch_size=batch_size,
+        max_length=max_length,
+        stride=stride,
+        drop_last=True,
+        shuffle=True,
+        num_workers=num_workers
+    )
+    val_loader = create_dataloader_v1(
+        val_data,
+        batch_size=batch_size,
+        max_length=max_length,
+        stride=stride,
+        drop_last=False,
+        shuffle=False,
+        num_workers=0
+    )
+    return train_loader, val_loader
