@@ -182,7 +182,7 @@ def main():
             f"Found interrupted checkpoint '{interrupted_checkpoint}'. "
             "Resume training from it? [y/n]: "
         ).strip().lower()
-        if answer is "y":
+        if answer == "y":
             checkpoint = torch.load(interrupted_checkpoint, map_location=device)
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
