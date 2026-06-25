@@ -9,9 +9,9 @@ class GPTDatasetV1(Dataset):
     def __init__(self, txt, tokenizer, max_length, stride):
         self.input_ids = []
         self.target_ids = []
-        # tokenize the entire text
+        # tokenizes the entire text
         token_ids = tokenizer.encode(txt)
-        # use a sliding window to chunk the book into overlapping 
+        # uses a sliding window to chunk the book into overlapping 
         # sequences of max length
         for i in range(0, len(token_ids) - max_length, stride):
             input_chunk = token_ids[i:i + max_length]
@@ -30,11 +30,11 @@ class GPTDatasetV1(Dataset):
 # ----------------------------------------------------------
 # Dataloader
 # ----------------------------------------------------------
-def create_dataloader_v1(txt, batch_size=4, max_length=256, stride=128, 
+def create_dataloader(txt, batch_size=4, max_length=256, stride=128, 
                          shuffle=True, drop_last=True, num_workers=0):
-    # initialize the tokenizer
+    # initializes the tokenizer
     tokenizer = tiktoken.get_encoding("gpt2")
-    # create dataset
+    # creates dataset
     dataset = GPTDatasetV1(txt, tokenizer, max_length, stride)
     dataloader = DataLoader(
         dataset,
@@ -67,7 +67,7 @@ def prepare_dataloaders(file_path, batch_size, max_length,
         stride = max_length
     text_data = load_text(file_path)
     train_data, val_data = split_data(text_data, train_ratio=train_ratio)
-    train_loader = create_dataloader_v1(
+    train_loader = create_dataloader(
         train_data,
         batch_size=batch_size,
         max_length=max_length,
@@ -76,7 +76,7 @@ def prepare_dataloaders(file_path, batch_size, max_length,
         shuffle=True,
         num_workers=num_workers
     )
-    val_loader = create_dataloader_v1(
+    val_loader = create_dataloader(
         val_data,
         batch_size=batch_size,
         max_length=max_length,
@@ -86,3 +86,16 @@ def prepare_dataloaders(file_path, batch_size, max_length,
         num_workers=0
     )
     return train_loader, val_loader
+
+# prints token information from the dataset
+def print_dataset(file_path, tokenizer, train_ratio=0.9):
+    text_data = load_text(file_path)
+    train_data, val_data = split_data(text_data, train_ratio=train_ratio)
+    train_tokens = tokenizer.encode(train_data)
+    val_tokens = tokenizer.encode(val_data)
+    unique_chars = sorted(set(text_data))
+    return {
+        "train_tokens": len(train_tokens),
+        "val_tokens": len(val_tokens),
+        "unique_chars": unique_chars,
+    }
