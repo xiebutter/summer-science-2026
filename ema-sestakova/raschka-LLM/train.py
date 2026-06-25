@@ -1,13 +1,13 @@
 """
 Pretraining.
 """
-import torch
 import os
+import torch
 import tiktoken
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from model import GPTModel, generate
-from dataset import prepare_dataloaders
+from dataset import prepare_dataloaders, print_dataset
 
 GPT_CONFIG_124M = {
     "vocab_size": 50257,
@@ -15,10 +15,19 @@ GPT_CONFIG_124M = {
     "emb_dim": 768,
     "n_heads": 12,
     "n_layers": 12,
-    "drop_rate": 0.1,
+    "drop_rate": 0.2, # original dropout: 0.1
     "qkv_bias": False
 }
 
+GPT_CONFIG_SMALL = {
+    "vocab_size": 50257,
+    "context_length": 256,
+    "emb_dim": 256, # decrease emb dimension
+    "n_heads": 4, # decrease num heads
+    "n_layers": 4, # decrease num layers
+    "drop_rate": 0.2, # increase droupout
+    "qkv_bias": False
+}
 # ----------------------------------------------------------
 # UTILITY FUNCTIONS
 # ----------------------------------------------------------
@@ -117,6 +126,7 @@ def train_model(model, train_loader, val_loader, optimizer, device,
                       f"Train loss {train_loss:.3f}, "
                       f"Val loss {val_loss:.3f}"
                 )
+
         # print a sample text after each epoch
         generate_and_print_sample(
             model, tokenizer, device, start_context
@@ -158,70 +168,49 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
 # MAIN
 # ----------------------------------------------------------
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+    print(f"Using device: {device}")
     tokenizer = tiktoken.get_encoding("gpt2")
     file_path = os.path.join(os.path.dirname(__file__), "shakespeare.txt")
     train_loader, val_loader = prepare_dataloaders(
         file_path=file_path,
-        batch_size=2,
+        batch_size=2, # increase to 16 if memory allows
         max_length=GPT_CONFIG_124M["context_length"],
         stride=GPT_CONFIG_124M["context_length"],
         train_ratio=0.9,
         num_workers=0
     )
+    stats = print_dataset(file_path, tokenizer, train_ratio=0.9)
+    print("----- Dataset stats -----")
+    print(f"Training tokens: {stats['train_tokens']}")
+    print(f"Validation tokens: {stats['val_tokens']}")
+    print(f"Number of unique characters: {len(stats['unique_chars'])}")
+    print("Unique characters:")
+    print(stats["unique_chars"])
+    print("-------------------------")
     model = GPTModel(GPT_CONFIG_124M).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=0.0004, weight_decay=0.1
     )
-    interrupted_checkpoint = "model_and_optimizer_interrupted.pth"
-    final_checkpoint = "model_and_optimizer.pth"
-
-    if os.path.exists(interrupted_checkpoint):
-        answer = input(
-            f"Found interrupted checkpoint '{interrupted_checkpoint}'. "
-            "Resume training from it? [y/n]: "
-        ).strip().lower()
-        if answer == "y":
-            checkpoint = torch.load(interrupted_checkpoint, map_location=device)
-            model.load_state_dict(checkpoint["model_state_dict"])
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            print("Loaded interrupted checkpoint. Resuming training.")
-        else:
-            print("Starting training from scratch.")
-    num_epochs = 10
-    try:
-        train_losses, val_losses, tokens_seen = train_model(
-            model, train_loader, val_loader, optimizer, device,
-            num_epochs=num_epochs,
-            eval_freq=5,
-            eval_iter=5,
-            start_context="Every effort moves you",
-            tokenizer=tokenizer
+    model_path = "model_and_optimizer.pth"
+    num_epochs = 5 # fewer epochs, changed from 10
+    train_losses, val_losses, tokens_seen = train_model(
+        model, train_loader, val_loader, optimizer, device,
+        num_epochs=num_epochs,
+        eval_freq=50, # changed from 5
+        eval_iter=5,
+        start_context="Every effort moves you",
+        tokenizer=tokenizer
         )
-    except KeyboardInterrupt:
-        print("\nTraining interrupted. Saving checkpoint...")
-        torch.save({
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-        }, "model_and_optimizer_interrupted.pth")
-        print("Checkpoint saved as model_and_optimizer_interrupted.pth")
-        return
-
-    # only runs if training completed normally
     epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
     plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
     # save checkpoint
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-    }, final_checkpoint)
-    print(f"Final model saved as {final_checkpoint}")
-
-    if os.path.exists(interrupted_checkpoint):
-        os.remove(interrupted_checkpoint)
-        print(f"Removed old interrupted checkpoint '{interrupted_checkpoint}'")
-
+    }, model_path)
+    print(f"Final model saved as {model_path}")
     model.eval()
     context = text_to_token_ids("Every effort moves you", tokenizer).to(device)
     token_ids = generate(
