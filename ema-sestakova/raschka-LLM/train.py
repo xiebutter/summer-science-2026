@@ -4,6 +4,7 @@ Pretraining.
 import os
 import torch
 import tiktoken
+from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from model import GPTModel, generate
@@ -21,13 +22,14 @@ GPT_CONFIG_124M = {
 
 GPT_CONFIG_SMALL = {
     "vocab_size": 50257,
-    "context_length": 256,
+    "context_length": 256, # maybe change to 128?
     "emb_dim": 256, # decrease emb dimension
     "n_heads": 4, # decrease num heads
     "n_layers": 4, # decrease num layers
-    "drop_rate": 0.2, # increase droupout
+    "drop_rate": 0.2,
     "qkv_bias": False
 }
+
 # ----------------------------------------------------------
 # UTILITY FUNCTIONS
 # ----------------------------------------------------------
@@ -65,7 +67,6 @@ def calc_loss_loader(data_loader, model, device, num_batches=None):
         # reduces the number of batches to match the total number of batches in the data
         # loader if num_batches exceeds the number of batches in the data loader
         num_batches = min(num_batches, len(data_loader))
-
     for i, (input_batch, target_batch) in enumerate(data_loader):
         if i < num_batches:
             loss = calc_loss_batch(
@@ -95,39 +96,44 @@ def evaluate_model(model, train_loader, val_loader, device, eval_iter):
 
 # the main function for pretraining LLMs
 def train_model(model, train_loader, val_loader, optimizer, device, 
-                       num_epochs, eval_freq, eval_iter, start_context, tokenizer):
+                       num_epochs, eval_freq, eval_iter, start_context, tokenizer,
+                       accumulation_steps=1):
     # initializes lists to track losses and tokens seen
     train_losses, val_losses, track_tokens_seen = [], [], []
     tokens_seen, global_step = 0, -1
     # main training loop
     for epoch in range(num_epochs):
         model.train()
-        for input_batch, target_batch in train_loader:
-            # reset loss gradients from the previous batch iteration
-            optimizer.zero_grad()
+        optimizer.zero_grad()
+        for batch_idx, (input_batch, target_batch) in enumerate(train_loader):
             loss = calc_loss_batch(
                 input_batch, target_batch, model, device
             )
+            loss = loss / accumulation_steps
             # calculate loss gradients
             loss.backward()
-            # update model weights using loss gradient
-            optimizer.step()
             tokens_seen += input_batch.numel()
-            global_step += 1
-            # OPTIONAL evaluation step
-            if global_step % eval_freq == 0:
-                train_loss, val_loss = evaluate_model(
-                    model, train_loader, val_loader, device, eval_iter
-                )
-                train_losses.append(train_loss)
-                val_losses.append(val_loss)
-                track_tokens_seen.append(tokens_seen)
-                print(f"Ep {epoch+1} (Step {global_step:06d}): "
-                      f"Train loss {train_loss:.3f}, "
-                      f"Val loss {val_loss:.3f}"
-                )
-
-        # print a sample text after each epoch
+            if (batch_idx + 1) % accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+                global_step += 1
+                # OPTIONAL evaluation step
+                if global_step % eval_freq == 0:
+                    train_loss, val_loss = evaluate_model(
+                        model, train_loader, val_loader, device, eval_iter
+                    )
+                    train_losses.append(train_loss)
+                    val_losses.append(val_loss)
+                    track_tokens_seen.append(tokens_seen)
+                    print(f"Ep {epoch+1} (Step {global_step:06d}): "
+                        f"Train loss {train_loss:.3f}, "
+                        f"Val loss {val_loss:.3f}"
+                    )
+        # handle leftover gradients if the number of batches isn't divisible
+        # by accumulation_steps
+        if (batch_idx + 1) % accumulation_steps != 0:
+            optimizer.step()
+            optimizer.zero_grad()
         generate_and_print_sample(
             model, tokenizer, device, start_context
         )
@@ -148,7 +154,7 @@ def generate_and_print_sample(model, tokenizer, device, start_context):
     model.train()
 
 # plots training and validation set losses
-def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
+def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses, save_path=None):
     fig, ax1 = plt.subplots(figsize=(5, 3))
     ax1.plot(epochs_seen, train_losses, label="Training loss")
     ax1.plot(
@@ -162,21 +168,28 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
     ax2.plot(tokens_seen, train_losses, alpha=0)
     ax2.set_xlabel("Tokens seen")
     fig.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path)
     plt.show()
 
 # ----------------------------------------------------------
 # MAIN
 # ----------------------------------------------------------
 def main():
+    # create new folder for runs
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = os.path.join("runs", f"run_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+    # specify device
     device = torch.device("cuda" if torch.cuda.is_available() else "mps")
     print(f"Using device: {device}")
     tokenizer = tiktoken.get_encoding("gpt2")
     file_path = os.path.join(os.path.dirname(__file__), "shakespeare.txt")
     train_loader, val_loader = prepare_dataloaders(
         file_path=file_path,
-        batch_size=2, # increase to 16 if memory allows
-        max_length=GPT_CONFIG_124M["context_length"],
-        stride=GPT_CONFIG_124M["context_length"],
+        batch_size=24, # original = 2
+        max_length=GPT_CONFIG_SMALL["context_length"],
+        stride=128, # original stride=GPT_CONFIG_SMALL["context_length"]
         train_ratio=0.9,
         num_workers=0
     )
@@ -188,27 +201,33 @@ def main():
     print("Unique characters:")
     print(stats["unique_chars"])
     print("-------------------------")
-    model = GPTModel(GPT_CONFIG_124M).to(device)
+    model = GPTModel(GPT_CONFIG_SMALL).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=0.0004, weight_decay=0.1
+        # original lr=0.0004
+        # original weight_decay=0.1, then 0.05
     )
-    model_path = "model_and_optimizer.pth"
-    num_epochs = 5 # fewer epochs, changed from 10
+    # paths
+    model_path = os.path.join(run_dir, f"model_{timestamp}.pth")
+    plot_path = os.path.join(run_dir, f"loss_plot_{timestamp}.png")
+    num_epochs = 20 # fewer epochs, changed from 10
     train_losses, val_losses, tokens_seen = train_model(
         model, train_loader, val_loader, optimizer, device,
         num_epochs=num_epochs,
-        eval_freq=50, # changed from 5
+        eval_freq=10, # changed from 5
         eval_iter=5,
         start_context="Every effort moves you",
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
+        accumulation_steps=4
         )
     epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
-    plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
-    # save checkpoint
+    plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses, save_path=plot_path)
+    # save model
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
+        "config": GPT_CONFIG_SMALL,
     }, model_path)
     print(f"Final model saved as {model_path}")
     model.eval()
@@ -217,7 +236,7 @@ def main():
         model=model,
         idx=context,
         max_new_tokens=15,
-        context_size=GPT_CONFIG_124M["context_length"],
+        context_size=GPT_CONFIG_SMALL["context_length"],
         top_k=25,
         temperature=1.4
     )
@@ -225,3 +244,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ipython %timeit
