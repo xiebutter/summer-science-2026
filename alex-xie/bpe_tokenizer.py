@@ -173,7 +173,7 @@ def encode(rawtext, vocab, merges):
             if token in vocab:
                 token_ids.append(vocab[token])
             else:
-                print(f"Warning: Character '{token}' not found in vocabulary. Skipping.")   
+                print(f"Warning: Character '{token}' not found in vocabulary. Skipping.")
     
     print("\nRaw text encoded", end="\n")          
     return token_ids
@@ -190,9 +190,63 @@ def decode(token_ids, vocab):
     
     return clean_text
 
-#tokenize hamlet
+def encode_fast(rawtext, vocab, merges):
+    # 1. Normalize and clean input
+    # Assuming convertChar returns a list of words, where each word is a list/tuple of chars
+    words = convertChar(normalize(rawtext))
+    
+    # Create a fast lookup rank dictionary for merges: { (first, second): rank_id }
+    # Lower rank means it was merged earlier in training (higher priority)
+    merge_ranks = {pair: i for i, pair in enumerate(merges.keys())}
+    
+    # Cache to store already-tokenized unique words
+    word_cache = {}
+    
+    def encode_word(word_tuple):
+        """Tokenizes a single word using the learned merge ranks."""
+        if word_tuple in word_cache:
+            return word_cache[word_tuple]
+            
+        # Convert word list to a list of symbols
+        parts = list(word_tuple)
+        perc = 0
+        while len(parts) > 1:
+            # Find all current adjacent pairs in this word and look up their merge ranks
+            pairs = [(parts[i], parts[i+1]) for i in range(len(parts) - 1)]
+            
+            # Find the pair that was trained earliest (lowest rank)
+            # If none of the pairs exist in our merge rules, we are done merging this word
+            valid_pairs = [p for p in pairs if p in merge_ranks]
+            if not valid_pairs:
+                break
+                
+            best_pair = min(valid_pairs, key=lambda p: merge_ranks[p])
+            
+            # Perform the merge for this specific best pair within the word
+            new_parts = []
+            i = 0
+            first, second = best_pair
+            while i < len(parts):
+                if i < len(parts) - 1 and parts[i] == first and parts[i+1] == second:
+                    new_parts.append(first + second)
+                    i += 2
+                else:
+                    new_parts.append(parts[i])
+                    i += 1
+            parts = new_parts
+        word_cache[word_tuple] = parts
+        return parts
 
-from urllib.request import urlopen
-url = "https://gist.githubusercontent.com/provpup/2fc41686eab7400b796b/raw/b575bd01a58494dfddc1d6429ef0167e709abf9b/hamlet.txt"
-with urlopen(url) as response:
-    rawdata = response.read().decode('utf-8')
+    # 2. Process all words (leveraging the cache automatically)
+    token_ids = []
+    for word in words:
+        # Convert to tuple so it can be hashed/cached
+        encoded_word = encode_word(tuple(word)) 
+        
+        for token in encoded_word:
+            if token in vocab:
+                token_ids.append(vocab[token])
+            else:
+                print(f"Warning: Character '{token}' not found in vocabulary. Skipping.")
+
+    return token_ids
