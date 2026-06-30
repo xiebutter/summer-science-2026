@@ -7,7 +7,14 @@ import unicodedata
 import re
 from collections import Counter, defaultdict
 
-test_text = "Hello, how are you? Hello, I am doing good."
+from urllib.request import urlopen
+
+def importdata(url):
+    with urlopen(url) as response:
+        rawdata = response.read().decode('utf-8')
+    return rawdata
+
+rawtext = importdata("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
 
 # simplify using basic python (intro to cs class-level)
 
@@ -116,7 +123,8 @@ def BPEtokenizer(rawtext, targetsize = 5000):
                 break
             merges[pair] = merged
             vocab[merged] = len(vocab)
-        print(f"Current vocab size: {len(vocab)} / {targetsize}")
+        print(f"\rCurrent vocab size: {len(vocab)} / {targetsize}", end = "")
+    print("\nTarget vocab size reached. Training stopped")
     return vocab, merges
 
 #save token data
