@@ -5,31 +5,33 @@ import mlx.nn as nn
 import pandas as pd
 import mlx.optimizers as optim
 from datasets import load_dataset
+from datasets import concatenate_datasets
 
-blocksize = 256
+blocksize = 128
 batchsize = 32
-learn_rate = 3e-4
+learn_rate = 1e-4
 max_iterations = 5000
 eval_interval = 500
 eval_iterations = 200
-n_embd = 192
-heads = 6
-n_layer = 6
-dropout = 0.3
+n_embd = 128
+heads = 4
+n_layer = 4
+dropout = 0.2
 weightdecay = 1e-4
-temp = 0.8
+temp = 1
 
+dimensions = 1
 
-# def importdata(url):
-#     with urlopen(url) as response:
-#         rawdata = response.read().decode('utf-8')
-#     return rawdata
+def importdata(url):
+    with urlopen(url) as response:
+        rawdata = response.read().decode('utf-8')
+    return rawdata
 
-# rawtext = importdata("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
+rawtext = importdata("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
 
-# vocab, merges = load_tokens("shakespeare_token.json")
+vocab, merges = load_tokens("shakespeare_token.json")
 
-vocab, merges = load_tokens("dolly_tokens.json")
+# vocab, merges = load_tokens("dolly_tokens.json")
 
 vocab_size = len(vocab)
 
@@ -43,11 +45,16 @@ EOT_ID = vocab['<|end_of_turn|>']
 # df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
 
 # tinystories
-df = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+# df = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+
+# tiny shakespeare
+# rawdata = load_dataset("Trelis/tiny-shakespeare")
+
+# df = concatenate_datasets([rawdata['train'], rawdata['test']])
 
 categories = ['open_qa', 'general_qa', 'classification', 'closed_qa', 'summarization', 'brainstorming', 'information_extraction', 'summarization', 'creative_writing']
 
-def process_data(df, mode = 'train', max_items = 20000):
+def process_data(df, mode = 'pre', max_items = 20000):
 
     all_x = []
     all_y = []
@@ -55,8 +62,8 @@ def process_data(df, mode = 'train', max_items = 20000):
     for idx, item in enumerate(df):
         if idx >= max_items:
             break
-        
-        if mode == "finetune":
+
+        if mode == "post":
             # Format the text with your exact special tokens
             system_str = f"<|system|>You are an AI performing a task categorized under: {item['category']}\n"
             user_str = f"<|user|>{item['instruction']}\n"
@@ -79,8 +86,8 @@ def process_data(df, mode = 'train', max_items = 20000):
 
             for i in range(assistant_start_idx, len(full_sequence)):
                 target_sequence[i] = full_sequence[i]
-        elif mode == "train":
-            text = item['text']
+        elif mode == "pre":
+            text = item['Text']
             full_sequence = encode_fast(text, vocab, merges)
 
         if len(full_sequence) > blocksize + 1:
@@ -89,38 +96,64 @@ def process_data(df, mode = 'train', max_items = 20000):
         padding = (blocksize + 1) - len(full_sequence)
         if padding > 0:
             full_sequence += [EOT_ID] * padding
-            if mode == "finetune":
+            if mode == "post":
                 target_sequence += [-100] * padding
 
         all_x.append(full_sequence)
-        if mode == "finetune":
+        if mode == "post":
             all_y.append(target_sequence)
-        elif mode == "train":
+        elif mode == "pre":
             all_y.append(full_sequence)
 
     return mx.array(all_x, dtype=mx.int64), mx.array(all_y, dtype=mx.int64)
 
-X_tensor, Y_tensor = process_data(df)
+if dimensions == 2:
+    X_tensor, Y_tensor = process_data(df)
+    n = int(0.9 * len(X_tensor))
+    training_X, val_X = X_tensor[:n], X_tensor[n:]
+    training_Y, val_Y = Y_tensor[:n], Y_tensor[n:]
+else:
+    X_tensor = mx.array(encode_fast(rawtext, vocab, merges), dtype=mx.int64)
+    n = int(0.9 * len(X_tensor))
+    training_X, val_X = X_tensor[:n], X_tensor[n:]
 
-n = int(0.9 * len(X_tensor))
-training_X, val_X = X_tensor[:n], X_tensor[n:]
-training_Y, val_Y = Y_tensor[:n], Y_tensor[n:]
-
-
-def get_batch_2D(split):
+def get_batch(split, dim = dimensions):
     data_X = training_X if split == 'train' else val_X
-    data_Y = training_Y if split == 'train' else val_Y
+    if dim == 2:
+        data_Y = training_Y if split == 'train' else val_Y
 
-    ix = mx.random.randint(0, len(data_X), [batchsize])
-    x = data_X[ix, :blocksize]
-    y = data_Y[ix, 1:blocksize+1]
-
+    ix = mx.random.randint(0, len(data_X) - blocksize - 1, [batchsize])
+    if dim == 2:
+        x = data_X[ix, :blocksize]
+        y = data_Y[ix, 1:blocksize+1]
+    else:
+        x = mx.stack([data_X[int(i) : int(i) + blocksize] for i in ix])
+        y = mx.stack([data_X[int(i) + 1 : int(i) + blocksize + 1] for i in ix])
     return x, y
 
 def loss_fn(model, x, y):
     logits = model(x)
     B, T, V = logits.shape
-    return nn.losses.cross_entropy(logits.reshape(-1, V), y.reshape(-1)).mean()
+    
+    logits_flat = logits.reshape(-1, V)
+    y_flat = y.reshape(-1)
+    x_flat = x.reshape(-1)
+    
+    # 1. Clamp -100 to a safe dummy index (e.g., 0) so MLX doesn't use negative indexing
+    safe_y = mx.where(y_flat == -100, 0, y_flat)
+    
+    # 2. Compute raw token losses using the safe targets
+    raw_loss = nn.losses.cross_entropy(logits_flat, safe_y)
+    
+    # 3. Build the Master Mask
+    # Keep it True UNLESS the target was -100 OR it's a repeating padding sequence
+    mask = (y_flat != -100) & ~((x_flat == EOT_ID) & (y_flat == EOT_ID))
+    
+    # 4. Average the loss only over valid tokens
+    filtered_loss = mx.where(mask, raw_loss, 0.0)
+    
+    # Add a small epsilon (1e-5) to prevent division by zero on an empty batch
+    return filtered_loss.sum() / (mask.sum() + 1e-5)
 
 def estimate_loss():
     out = {}
@@ -130,7 +163,7 @@ def estimate_loss():
         losses = []
 
         for k in range(eval_iterations):
-            X, Y = get_batch_2D(split)
+            X, Y = get_batch(split)
             loss = loss_fn(model, X, Y)
             losses.append(loss.item())
 
@@ -266,7 +299,7 @@ class Block(nn.Module):
         # Pre-LN residual connections work exactly the same way!
         x = x + self.sa_heads(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
-        return x 
+        return x
 
 class XieLanguageModel(nn.Module):
     def __init__(self, vocab_size, n_embd, blocksize, n_layer, n_head, dropout=0.1):
@@ -322,15 +355,23 @@ class XieLanguageModel(nn.Module):
         return idx
 
 model = XieLanguageModel(vocab_size=vocab_size, n_embd=n_embd, blocksize=blocksize, n_layer=n_layer, n_head=heads, dropout=dropout)
-    
-optimizer = optim.AdamW(learning_rate=learn_rate, weight_decay=weightdecay)
+
+warmup = [500]
+schedules = [
+    optim.linear_schedule(init=1e-5, end=learn_rate, steps=warmup[0]),
+    optim.cosine_decay(init=learn_rate, decay_steps=max_iterations-warmup[0], end=1e-5)
+]
+
+lr_schedule = optim.join_schedules(schedules=schedules, boundaries=warmup)
+
+optimizer = optim.AdamW(learning_rate=lr_schedule, weight_decay=weightdecay)
 
 loss_and_grad_fn = nn.value_and_grad(model, loss_fn)
 
 def train():
     
     print("Starting MLX training loop...")
-    
+
     for i in range(max_iterations):
         if i % eval_interval == 0:
             # Computes evaluation metrics using your converted MLX estimate_loss function
@@ -341,7 +382,7 @@ def train():
         print(f"\r{percentage:.2f}%", end="")
         
         # Ensure your batch function returns native MLX arrays, not PyTorch tensors!
-        xb, yb = get_batch_2D('train')
+        xb, yb = get_batch('train')
 
         # Simultaneously compute the scalar loss and the gradient dictionary
         loss, grads = loss_and_grad_fn(model, xb, yb)
@@ -417,3 +458,10 @@ def talk():
         clean = raw_response.split("<|end_of_turn|>")[0].strip()
         
         print(f"\nResponse: {clean}")
+
+def generate(tokens = 50):
+    userinput = input("Prompt: ")
+    context = mx.array(encode_fast(userinput, vocab, merges), dtype=mx.int64)[None, :]
+    response_tokens = model.generate(context, max_new_tokens=tokens, temperature=temp)
+    response = decode(response_tokens[0].tolist(), vocab)
+    print(f"\nResponse: {response}")
