@@ -4,10 +4,10 @@ from model import GPTModel
 from train import text_to_token_ids
 
 # trained
-model_path = "runs/run_2026-06-29_15-43-58/model_2026-06-29_15-43-58.pth"
+# model_path = "runs/run_2026-06-29_15-43-58/model_2026-06-29_15-43-58.pth"
 
 # untrained
-# model_path = "runs/run_2026-07-06_11-45-51/model_2026-07-06_11-45-51.pth"
+model_path = "runs/run_2026-07-06_11-45-51/model_2026-07-06_11-45-51.pth"
 
 max_generated = 100
 top_k = 25
