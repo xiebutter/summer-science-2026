@@ -1,4 +1,4 @@
-from bpe_tokenizer import BPEtokenizer, save_tokens, load_tokens, encode, decode, encode_fast
+#from bpe_tokenizer import BPEtokenizer, save_tokens, load_tokens, encode, decode, encode_fast
 from urllib.request import urlopen
 import mlx.core as mx
 import mlx.nn as nn
@@ -6,46 +6,63 @@ import pandas as pd
 import mlx.optimizers as optim
 from datasets import load_dataset
 from datasets import concatenate_datasets
+import tiktoken
+encoding = tiktoken.encoding_for_model("gpt2")
 
-blocksize = 128
+from tqdm import tqdm
+import time
+
+blocksize = 256
 batchsize = 32
 learn_rate = 1e-4
-max_iterations = 5000
+max_iterations = 10000
 eval_interval = 500
 eval_iterations = 200
 n_embd = 128
-heads = 4
-n_layer = 4
-dropout = 0.2
+heads = 6
+n_layer = 6
+dropout = 0.1
 weightdecay = 1e-4
-temp = 1
+temp = 0.8
+vocab_size = 50257
 
 dimensions = 1
 
-def importdata(url):
-    with urlopen(url) as response:
-        rawdata = response.read().decode('utf-8')
-    return rawdata
+# def importdata(url):
+#     with urlopen(url) as response:
+#         rawdata = response.read().decode('utf-8')
+#     return rawdata
 
-rawtext = importdata("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
+# rawtext = importdata("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
 
-vocab, merges = load_tokens("shakespeare_token.json")
+#vocab, merges = load_tokens("tinystories_tokens.json")
 
 # vocab, merges = load_tokens("dolly_tokens.json")
 
-vocab_size = len(vocab)
+# vocab_size = len(vocab)
 
-SYSTEM_ID = vocab['<|system|>']
-USER_ID = vocab['<|user|>']
-CONTEXT_ID = vocab['<|context|>']
-ASSISTANT_ID = vocab['<|assistant|>']
-EOT_ID = vocab['<|end_of_turn|>']
+# SYSTEM_ID = vocab['<|system|>']
+# USER_ID = vocab['<|user|>']
+# CONTEXT_ID = vocab['<|context|>']
+# ASSISTANT_ID = vocab['<|assistant|>']
+# EOT_ID = vocab['<|endoftext|>']
 
 # dolly 15k
 # df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
 
 # tinystories
 # df = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+
+# all_text = []
+
+# for row in df:  # Ensure the 'story' field exists
+#     all_text.append(row['text'])
+# del df
+
+# rawtext = "".join(all_text)
+
+with open("tinystories_first_quarter.txt", "r", encoding="utf-8") as f:
+    test_text = f.read()
 
 # tiny shakespeare
 # rawdata = load_dataset("Trelis/tiny-shakespeare")
@@ -71,10 +88,10 @@ def process_data(df, mode = 'pre', max_items = 20000):
             assistant_str = f"<|assistant|>{item['response']}<|end_of_turn|>"
             
             # Encode each piece separately so we know exactly where the assistant's response begins
-            ids_system = encode_fast(system_str, vocab, merges)
-            ids_user = encode_fast(user_str, vocab, merges)
-            ids_context = encode_fast(context_str, vocab, merges)
-            ids_assistant = encode_fast(assistant_str, vocab, merges)
+            ids_system = encoding.encode(system_str)
+            ids_user = encoding.encode(user_str)
+            ids_context = encoding.encode(context_str)
+            ids_assistant = encoding.encode(assistant_str)
 
             full_sequence = ids_system + ids_user + ids_context + ids_assistant
 
@@ -88,7 +105,7 @@ def process_data(df, mode = 'pre', max_items = 20000):
                 target_sequence[i] = full_sequence[i]
         elif mode == "pre":
             text = item['Text']
-            full_sequence = encode_fast(text, vocab, merges)
+            full_sequence = encoding.encode(text)
 
         if len(full_sequence) > blocksize + 1:
             full_sequence = full_sequence[:blocksize + 1]
@@ -113,7 +130,7 @@ if dimensions == 2:
     training_X, val_X = X_tensor[:n], X_tensor[n:]
     training_Y, val_Y = Y_tensor[:n], Y_tensor[n:]
 else:
-    X_tensor = mx.array(encode_fast(rawtext, vocab, merges), dtype=mx.int64)
+    X_tensor = mx.array(encoding.encode(test_text), dtype=mx.int64)
     n = int(0.9 * len(X_tensor))
     training_X, val_X = X_tensor[:n], X_tensor[n:]
 
@@ -147,7 +164,7 @@ def loss_fn(model, x, y):
     
     # 3. Build the Master Mask
     # Keep it True UNLESS the target was -100 OR it's a repeating padding sequence
-    mask = (y_flat != -100) & ~((x_flat == EOT_ID) & (y_flat == EOT_ID))
+    mask = (y_flat != -100) #& ~((x_flat == EOT_ID) & (y_flat == EOT_ID))
     
     # 4. Average the loss only over valid tokens
     filtered_loss = mx.where(mask, raw_loss, 0.0)
@@ -232,6 +249,9 @@ class FeedForward(nn.Module):
     def __call__(self, x): # <-- Changed from forward()
         return self.net(x)
     
+
+# google gemini coded function (creates multiple heads in parallel)
+
 class MultiHeadAttention_Parallel(nn.Module):
 
     def __init__(self, num_heads, head_size, n_embd, blocksize, dropout):
@@ -372,14 +392,14 @@ def train():
     
     print("Starting MLX training loop...")
 
-    for i in range(max_iterations):
+    for i in tqdm(range(max_iterations)):
         if i % eval_interval == 0:
             # Computes evaluation metrics using your converted MLX estimate_loss function
             losses = estimate_loss()
             print(f"\rstep {i}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         
-        percentage = 100 * ((i + 1) / max_iterations)
-        print(f"\r{percentage:.2f}%", end="")
+        # percentage = 100 * ((i + 1) / max_iterations)
+        # print(f"\r{percentage:.2f}%", end="")
         
         # Ensure your batch function returns native MLX arrays, not PyTorch tensors!
         xb, yb = get_batch('train')
@@ -393,7 +413,7 @@ def train():
         # CRITICAL: Force MLX's lazy execution graph to compute on the Apple Silicon GPU
         mx.eval(model.state, optimizer.state)
 
-    print(f"\r100.00%\nTraining complete.")
+    # print(f"\r100.00%\nTraining complete.")
 
     # Save weights using high-performance native Safetensors format
     model.save_weights("model_weights.safetensors")
@@ -430,7 +450,7 @@ def talk():
         full_prompt = f"{system_prompt}<|user|>{user_input}\n<|assistant|>"
 
         # 1. Tokenize prompt to a flat list using your clean fast encoder
-        context_tokens = encode_fast(full_prompt, vocab, merges)
+        context_tokens = encoding.encode(full_prompt)
         
         # 2. Convert to an MLX array and add a batch axis (equivalent to unsqueeze)
         context = mx.array([context_tokens]) # Shape: (1, sequence_length)
@@ -454,14 +474,14 @@ def talk():
         response_tokens = generated_text[prompt_length:]
 
         # 5. Decode back to strings and isolate clean text from padding/control elements
-        raw_response = decode(response_tokens, vocab)
+        raw_response = encoding.decode(response_tokens)
         clean = raw_response.split("<|end_of_turn|>")[0].strip()
         
         print(f"\nResponse: {clean}")
 
 def generate(tokens = 50):
     userinput = input("Prompt: ")
-    context = mx.array(encode_fast(userinput, vocab, merges), dtype=mx.int64)[None, :]
+    context = mx.array(encoding.encode(userinput), dtype=mx.int64)[None, :]
     response_tokens = model.generate(context, max_new_tokens=tokens, temperature=temp)
-    response = decode(response_tokens[0].tolist(), vocab)
+    response = encoding.decode(response_tokens[0].tolist())
     print(f"\nResponse: {response}")

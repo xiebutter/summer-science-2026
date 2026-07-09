@@ -3,6 +3,7 @@ import random
 import math
 import json
 
+from datasets import load_dataset, concatenate_datasets
 import unicodedata
 import re
 from collections import Counter, defaultdict
@@ -16,7 +17,7 @@ def importdata(url):
         rawdata = response.read().decode('utf-8')
     return rawdata
 
-rawtext = importdata("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
+# rawtext = importdata("https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt")
 
 # simplify using basic python (intro to cs class-level)
 
@@ -31,6 +32,18 @@ import pandas as pd
 # Load the dataset
 # df = pd.read_json("hf://datasets/databricks/databricks-dolly-15k/databricks-dolly-15k.jsonl", lines=True)
 
+# from huggingface_hub import login
+
+# # This logs you into the machine locally
+# login(token="HF_TOKEN")
+
+traindf = load_dataset("roneneldan/TinyStories", split = 'train', streaming=True)
+# testdf = load_dataset("roneneldan/TinyStories", split = 'validation', streaming=True)
+
+print("datasets loaded")
+
+#df = concatenate_datasets([traindf, testdf])
+
 # def format_data(row):
 #     # Establish the task capability constraint upfront
 #     system_prompt = f"<|system|>You are an AI performing a task categorized under: {row['category']}\n"
@@ -40,11 +53,6 @@ import pandas as pd
 #     else:
 #         return f"{system_prompt}<|user|>{row['instruction']}\n<|assistant|>{row['response']}<|end_of_turn|>\n"
 
-# formatted_records = df.apply(format_data, axis=1)
-# rawtext = "".join(formatted_records)
-
-test_text = rawtext[:5000]
-
 def normalize(text):
     text = text.strip() 
     norm = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
@@ -52,7 +60,7 @@ def normalize(text):
     # Replace spaces with Ġ upfront so the regex can see them clearly
     norm = norm.replace(" ", "Ġ")
     
-    pattern = re.compile(r'<\|(?:system|user|context|assistant|end_of_turn)\|>'
+    pattern = re.compile(r'<\|(?:system|user|context|assistant|endoftext)\|>'
                          r'|\n'
                          r'|\t'  # <-- Explicitly catch tabs
                          r'|Ġ?[a-zA-Z0-9]+|Ġ?[^Ġa-zA-Z0-9]|Ġ+')
@@ -69,7 +77,7 @@ def normalize(text):
 
 #convert normalized text into a list of characters
 def convertChar(normText):
-    special_tokens = {'<|system|>', '<|user|>', '<|context|>', '<|assistant|>', '<|end_of_turn|>', '\n', '\t', 'Ġ'}
+    special_tokens = {'<|system|>', '<|user|>', '<|context|>', '<|assistant|>', '<|endoftext|>', '\n', '\t', 'Ġ'}
     chars = []
     for tok, span in normText:
         word = []
@@ -135,15 +143,13 @@ def BPEtokenizer(rawtext, targetsize = 5000):
         for char in word:
             base_vocab.add(char)
     
-    special_tokens = ['<|system|>', '<|user|>', '<|context|>', '<|assistant|>', '<|end_of_turn|>', '\n', '\t', 'Ġ']
+    special_tokens = ['<|system|>', '<|user|>', '<|context|>', '<|assistant|>', '<|endoftext|>', '\n', '\t', 'Ġ']
 
-    # 3. CRITICAL STEP: Filter out the special tokens so they don't exist in this list!
+    # filter special tokens
     clean_base_vocab = [c for c in sorted(base_vocab) if c not in special_tokens]
-
-    # 4. Seed the special tokens first (guaranteed 0 to 4)
     vocab = {token: idx for idx, token in enumerate(special_tokens)}
 
-    # 5. Safely append the rest of the characters using len(vocab)
+    # add rest of tokens
     vocab.update({char: idx + len(vocab) for idx, char in enumerate(clean_base_vocab)})
     merges = {}
 
@@ -229,13 +235,16 @@ def encode(rawtext, vocab, merges):
 def decode(token_ids, vocab):
     id_to_token = {idx: token for token, idx in vocab.items()}
     
-    # Convert the IDs back into their string fragments
+    # Convert the IDs back into strings
     fragments = [id_to_token[uid] for uid in token_ids]
 
     merged_text = "".join(fragments)
     clean_text = merged_text.replace("Ġ", " ")
 
     return clean_text
+
+
+# google gemini coded function
 
 def encode_fast(rawtext, vocab, merges):
     # 1. Normalize and clean input
@@ -298,13 +307,15 @@ def encode_fast(rawtext, vocab, merges):
 
     return token_ids
 
+# google gemini coded function
+
 def BPEtokenizer_fast(rawtext, targetsize = 5000):
     # 1. Normalize and split text into structural words
     pretokens = normalize(rawtext)
     
     # 2. Count frequencies of unique words upfront (e.g., {"Ġ t h e": 10500})
     word_freqs = Counter()
-    special_tokens = ['<|system|>', '<|user|>', '<|context|>', '<|assistant|>', '<|end_of_turn|>', "\n", "\t", "Ġ"]
+    special_tokens = ['<|system|>', '<|user|>', '<|context|>', '<|assistant|>', '<|endoftext|>', "\n", "\t", "Ġ"]
     
     for tok, _ in pretokens:
         if tok in special_tokens:
@@ -379,3 +390,17 @@ def BPEtokenizer_fast(rawtext, targetsize = 5000):
         
     print("\nTarget vocab size reached. Training complete.")
     return vocab, merges
+
+# tokenize tinystories dataset
+
+# all_text = []
+
+# for row in traindf:  # Ensure the 'story' field exists
+#     all_text.append(row['text'])
+
+# del traindf
+
+# rawtext = "".join(all_text)
+
+# vocab, merges = BPEtokenizer_fast(rawtext, 10000)
+# save_tokens(vocab, merges, 'tinystories_tokens.json')
