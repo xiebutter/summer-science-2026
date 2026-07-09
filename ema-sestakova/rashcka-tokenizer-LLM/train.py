@@ -10,7 +10,6 @@ from tokenizer import RegexTokenizer
 from model import GPTModel, generate
 from dataset import prepare_dataloaders, print_dataset, load_text
 
-
 GPT_CONFIG_124M = {
     "vocab_size": 50257,
     "context_length": 256,
